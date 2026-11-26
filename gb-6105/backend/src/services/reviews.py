@@ -16,8 +16,9 @@ def get(db, run_id):
 
 def sign(db, run_id, data, actor):
     run = runs.get(db, run_id)
-    if run["status"] != JobState.DONE:
-        raise HTTPException(409, "批次执行成功后才能签核")
+    # 只有证据与校验摘要一同入库（终态 done）才开放签核。
+    if run["status"] != JobState.DONE or not run["result"] or not run["digest"]:
+        raise HTTPException(409, "批次执行成功且证据入库后才能签核")
     try:
         db.execute(insert(reviews).values(run_id=run_id, note=data.note, actor=actor, created_at=int(time())))
     except IntegrityError as exc:

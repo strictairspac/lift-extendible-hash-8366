@@ -18,3 +18,6 @@ class RunEntry(BaseModel):
     result: dict | None
     failure: str | None
     digest: str | None
+    owner: str | None
+    lease_expires_at: int | None
+    attempts: int

@@ -42,7 +42,7 @@ FIXTURES = [
 ]
 
 
-def run(payload, parameter, db):
+def run(payload, parameter):
     if type(parameter) is not int or not 1 <= parameter <= 16:
         raise ValueError("目标单桶容量须为 1–16")
     certs, probes, review_date = parse(payload)

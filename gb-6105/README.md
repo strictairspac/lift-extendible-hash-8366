@@ -48,11 +48,24 @@ docker compose up -d --build --wait
 | 前端 | 原生 HTML、CSS、JavaScript ES Modules、Nginx |
 | 后端 | Python 3.11、FastAPI、SQLAlchemy、JWT |
 | 数据库 | PostgreSQL 16 |
-| 后台执行 | Redis 通知、数据库持久任务队列和行锁、Python worker |
+| 后台执行 | Redis 通知、数据库持久任务队列、行锁与执行租约、Python worker |
 
 从 `backend/src/domain/scenario.py` 修改业务入口和演示口径，运行 `docker compose up -d --build --wait` 查看变更。数据库表结构在 `backend/src/models` 和 `backend/migrations`，输入模型在 `backend/src/schemas`。业务页和请求接口在 `frontend/src/pages`、`frontend/src/api`。资料、执行、复核三个工作流实体各有独立表和 API；场景输入及结果保留在所属资料和批次中。
 
-角色枚举在 `backend/src/constants/roles.py`、`frontend/src/constants/roles.js`，用于服务端访问控制、账号初始化、前端导航与签署。批次状态在 `backend/src/constants/job_state.py`、`frontend/src/constants/states.js`，用于队列、状态 API、状态标记与轮询。登记、提交、完成和签署事件写入审计表。
+角色枚举在 `backend/src/constants/roles.py`、`frontend/src/constants/roles.js`，用于服务端访问控制、账号初始化、前端导航与签署。批次状态在 `backend/src/constants/job_state.py`、`frontend/src/constants/states.js`，用于队列、状态 API、状态标记与轮询。登记、提交、领取、接管、完成和签署事件写入审计表。
+
+### 夜间批次的中断恢复与并发收尾
+
+批次在 `queued → running → done/failed` 之间流转，靠数据库执行租约保证夜间长时间检证不丢批、不重复登记完工：
+
+1. **领取**：worker 在一个事务里用 `FOR UPDATE SKIP LOCKED` 选出最早的「排队中」或「运行中但租约已过期」批次，写入本进程标识 `owner` 与 `lease_expires_at`，`attempts` 加一。同一批次同一时刻只有一个进程能领取。
+2. **保活**：计算在事务外执行（不长占行锁），后台线程按 `LEASE_SECONDS/3` 的节奏续租；健康进程不会因单批耗时长而被误接管。
+3. **接管**：原进程超时、崩溃或仍连着库但租约已过期时，下一拍（最迟约 1 秒）由别的 worker 接管同一批次，记 `reclaim` 审计并清空上一进程的半成品字段后重跑。
+4. **收尾 CAS**：终态写入是带 `status=running AND owner=自己 AND lease_expires_at 未变` 条件的 compare-and-swap UPDATE。原进程晚到的成功或报错命中 0 行、被静默丢弃，无法改动已被接管收尾的批次。
+5. **完工不重复**：终态字段、`finished_at` 与 `done/failed` 审计事件在同一事务、受同一 CAS 保护，重试只产生一条完工记录。
+6. **完成口径**：证据 `result` 与校验摘要 `digest` 在同一条 UPDATE 落库（要么同时可见，要么都不可见）。只有 `done` 且二者齐备时，检证页面才显示完成并开放签核与导出，服务层签核/导出接口同样按此口径拦截。
+
+租约时长由 `LEASE_SECONDS`（默认 30 秒）配置；`runs.owner`、`runs.lease_expires_at`、`runs.attempts` 通过 `migrations/v002_run_lease.py` 在旧库上幂等补齐。多 worker 副本靠同一套行锁与租约协调（水平扩容时需去掉 compose 里 worker 的固定 `container_name`，再用 `docker compose up -d --scale worker=N`）。
 
 `COMPOSE_PROJECT_NAME` 设置栈名，`FRONTEND_PORT`、`BACKEND_PORT`、`DB_PORT` 设置端口。通过 `DB_PASSWORD`、`JWT_SECRET`、`DEMO_PASSWORD` 配置本地凭据。设置 `SEED_DEMO=false` 可关闭演示数据载入，此时数据库初始没有演示账号。数据库密码调整后，已有数据卷需在数据库内同步修改用户密码。
 

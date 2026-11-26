@@ -40,7 +40,8 @@ def sign(run_id: int, form: ReviewInput, user=Depends(reviewer)):
 def export(run_id: int):
     with engine.connect() as db:
         run = runs.get(db, run_id)
-        if run["status"] != JobState.DONE:
+        # 证据与校验摘要同时存在才允许导出，半成品/被接管批次一律拒绝。
+        if run["status"] != JobState.DONE or not run["result"] or not run["digest"]:
             raise HTTPException(409, "没有可导出的执行结果")
         run["review"] = reviews.get(db, run_id)
     return Response(canonical_json(run), media_type="application/json", headers={

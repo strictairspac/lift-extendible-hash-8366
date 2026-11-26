@@ -20,10 +20,11 @@ function signature(review) {
 }
 
 export async function evidencePage(config, user, route) {
-  const runs = (await api.runs()).filter(item => item.status === "done");
+  const runs = (await api.runs()).filter(item => item.status === "done" && item.result && item.digest);
   const run = route.id ? await api.run(route.id) : runs[0];
-  if (!run?.result) return el("div", {class: "page"},
-    pageHeading(config.modules[3], null), empty("成功执行一个批次后可以查看、签核和下载证据。"),
+  // 只有终态 done 且证据、校验摘要同时入库才显示完成并开放签核/导出。
+  if (!run || run.status !== "done" || !run.result || !run.digest) return el("div", {class: "page"},
+    pageHeading(config.modules[3], null), empty("批次证据与校验摘要一同入库后，才能查看、签核和下载证据。"),
     el("a", {href: "#runs"}, config.modules[2]));
 
   const review = await api.review(run.id);
